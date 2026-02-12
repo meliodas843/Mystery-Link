@@ -1,0 +1,416 @@
+const wrongImg = "./cat_with_text.png";
+const correctImg = "./two_cats_high_five_no_background.png";
+
+const QUESTIONS = [
+  {
+    id: 1,
+    text: "Where I first saw you, what did i think of you?",
+    options: ["Damn those hands and nails are beautiful", "wew so heavenly eyes", "what a nice hat", "cool"],
+    correctIndex: 0,
+  },
+  {
+    id: 2,
+    text: "where did we go on our first trip (only us)?",
+    options: ["Terelj", "Jining datong", "Moscow", "Selenge"],
+    correctIndex: 2,
+    popup: { correct: "ahh good job 🧡", wrong: "How dare you!" },
+  },
+  {
+    id: 3,
+    text: "The day i asked you to be my gf (answer within 3 sec)?",
+    options: ["2023.07.05", "2022.08.05", "2021.06.04", "2023.07.28"],
+    correctIndex: 1,
+    popup: {
+      correct: "Nice job you remember that day",
+      wrong: "Did you forget 😭",
+    },
+  },
+  {
+    id: 4,
+    text: "what was the first matching things we had?",
+    options: ["Rings", "Tshirts", "Necklace", "Glasses"],
+    correctIndex: 2,
+    popup: { correct: "You're so good at remembering things!", wrong: "I'm gonna give you 1 more chance" },
+  },    
+];
+
+// ---------- Helpers ----------
+function rand(min, max) {
+  return Math.random() * (max - min) + min;
+}
+
+function makeConfettiPieces(count = 260) {
+  const now = Date.now();
+  return Array.from({ length: count }).map((_, i) => ({
+    id: `${now}-${i}`,
+    x: `${rand(0, 100)}vw`,
+    size: `${rand(6, 14)}px`,
+    rot: `${rand(-720, 720)}deg`,
+    dur: `${rand(3.2, 6)}s`,
+    delay: `${rand(0, 0.8)}s`,
+    c: `hsl(${Math.floor(rand(0, 360))} 95% 60%)`,
+  }));
+}
+
+// ---------- DOM ----------
+const el = {
+  scoreValue: document.getElementById("scoreValue"),
+
+  stageQuiz: document.getElementById("stageQuiz"),
+  stageCelebrate: document.getElementById("stageCelebrate"),
+  stageValentine: document.getElementById("stageValentine"),
+
+  questionText: document.getElementById("questionText"),
+  questionImg: document.getElementById("questionImg"),
+  options: document.getElementById("options"),
+  metaBadge: document.getElementById("metaBadge"),
+  quizActions: document.getElementById("quizActions"),
+
+  btnToValentine: document.getElementById("btnToValentine"),
+  btnRestartFromCelebrate: document.getElementById("btnRestartFromCelebrate"),
+
+  valentineArea: document.getElementById("valentineArea"),
+  btnYes: document.getElementById("btnYes"),
+  btnNo: document.getElementById("btnNo"),
+  yesCelebrateText: document.getElementById("yesCelebrateText"),
+  btnRestartFromValentine: document.getElementById("btnRestartFromValentine"),
+
+  stickerOverlay: document.getElementById("stickerOverlay"),
+  stickerImg: document.getElementById("stickerImg"),
+  stickerText: document.getElementById("stickerText"),
+
+  confetti: document.getElementById("confetti"),
+  yesPop: document.getElementById("yesPop"),
+};
+
+// ---------- State ----------
+const total = QUESTIONS.length;
+let index = 0;
+
+let score = 0;
+let scoredById = {};
+
+let selected = null;
+let locked = false;
+
+let sticker = null; // "correct" | "wrong" | null
+let popupText = "";
+
+let stage = "quiz"; // quiz | celebrate | valentine
+let valentineAnswer = null; // "yes" | null
+
+let yesConfetti = false;
+let yesPop = false;
+
+let noTransform = "translate(0,0)";
+
+let stickerTimer = null;
+let goNextTimer = null;
+let unlockTimer = null;
+
+function currentQ() {
+  return QUESTIONS[index];
+}
+function isLast() {
+  return index === total - 1;
+}
+function status() {
+  const q = currentQ();
+  if (!locked || selected == null) return null;
+  return selected === q.correctIndex ? "correct" : "wrong";
+}
+
+// ---------- UI helpers ----------
+function setStage(next) {
+  stage = next;
+
+  el.stageQuiz.hidden = stage !== "quiz";
+  el.stageCelebrate.hidden = stage !== "celebrate";
+  el.stageValentine.hidden = stage !== "valentine";
+
+  el.stageQuiz.setAttribute("aria-hidden", stage !== "quiz");
+  el.stageCelebrate.setAttribute("aria-hidden", stage !== "celebrate");
+  el.stageValentine.setAttribute("aria-hidden", stage !== "valentine");
+}
+
+function renderScore() {
+  el.scoreValue.textContent = `${score}/${total}`;
+}
+
+// ✅ IMPORTANT: use `hidden` attribute (NOT style.display)
+// because your CSS has [hidden]{ display:none !important; }
+function clearSticker() {
+  sticker = null;
+  popupText = "";
+  el.stickerOverlay.hidden = true;
+  el.stickerText.textContent = "";
+
+  el.stickerImg.hidden = true;
+  el.stickerImg.removeAttribute("src");
+  el.stickerImg.className = "sticker";
+}
+
+function showSticker(kind) {
+  if (stickerTimer) clearTimeout(stickerTimer);
+
+  const q = currentQ();
+  const raw = (q.popup && q.popup[kind]) || "";
+  popupText = raw;
+  sticker = kind;
+
+  el.stickerOverlay.hidden = false;
+
+  // hide sticker image ONLY for Q2 and Q3 (as you wanted earlier)
+  const hideImage = q.id === 2 || q.id === 3;
+
+  if (hideImage) {
+    el.stickerImg.hidden = true;
+    el.stickerImg.removeAttribute("src");
+  } else {
+    el.stickerImg.hidden = false;
+    el.stickerImg.src = kind === "wrong" ? wrongImg : correctImg;
+    el.stickerImg.className = `sticker ${kind === "wrong" ? "sticker--wrong" : ""}`;
+  }
+
+  el.stickerText.textContent = popupText || "";
+  el.stickerText.className = `stickerText ${kind === "wrong" ? "stickerText--wrong" : ""}`;
+
+  const duration = kind === "correct" ? 6000 : 3000;
+  stickerTimer = setTimeout(clearSticker, duration);
+}
+
+function renderBadge() {
+  const s = status();
+  el.metaBadge.innerHTML = "";
+  if (!s) return;
+
+  const span = document.createElement("span");
+  span.className = `badge ${s === "correct" ? "badge--ok" : "badge--no"}`;
+  span.textContent = s === "correct" ? "Correct 💙" : "Oops 🙈";
+  el.metaBadge.appendChild(span);
+}
+
+function renderActions() {
+  el.quizActions.innerHTML = "";
+  if (!isLast()) return;
+
+  const btn = document.createElement("button");
+  btn.className = "nextBtn";
+  btn.textContent = "Restart ↺";
+  btn.addEventListener("click", restart);
+  el.quizActions.appendChild(btn);
+}
+
+function renderOptions() {
+  const q = currentQ();
+  const s = status();
+
+  // question text
+  el.questionText.textContent = q.text;
+
+  // ✅ show question image ONLY on question 5
+  if (el.questionImg) {
+    if (q.id === 5 && q.image) {
+      el.questionImg.src = q.image;     // e.g. "emart.jpg" or "./images/emart.jpg"
+      el.questionImg.hidden = false;
+    } else {
+      el.questionImg.hidden = true;
+      el.questionImg.removeAttribute("src");
+    }
+  }
+
+  el.options.innerHTML = "";
+
+  q.options.forEach((label, i) => {
+    const isSelected = selected === i;
+    const isCorrect = q.correctIndex === i;
+
+    let variant = "option";
+    if (locked && isSelected && isCorrect) variant += " option--correct";
+    if (locked && isSelected && !isCorrect) variant += " option--wrong";
+
+    if (locked && s === "correct" && !isSelected && isCorrect) {
+      variant += " option--hint";
+    }
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = variant;
+    btn.textContent = label;
+    btn.setAttribute("role", "listitem");
+
+    btn.disabled = locked;
+    btn.addEventListener("click", () => pickOption(i));
+    el.options.appendChild(btn);
+  });
+}
+
+function renderQuiz() {
+  renderScore();
+  renderOptions();
+  renderBadge();
+  renderActions();
+}
+
+// ---------- Quiz flow ----------
+function goNextQuestion() {
+  if (isLast()) {
+    setStage("celebrate");
+    selected = null;
+    locked = false;
+    clearSticker();
+    renderQuiz();
+    return;
+  }
+
+  index += 1;
+  selected = null;
+  locked = false;
+  clearSticker();
+  renderQuiz();
+}
+
+function pickOption(i) {
+  if (stage !== "quiz") return;
+  if (locked) return;
+
+  const q = currentQ();
+  const qid = q.id;
+
+  selected = i;
+  locked = true;
+
+  const isCorrect = i === q.correctIndex;
+
+  if (isCorrect) {
+    if (!scoredById[qid]) {
+      score += 1;
+      scoredById[qid] = true;
+    }
+
+    showSticker("correct");
+    renderQuiz();
+
+    if (goNextTimer) clearTimeout(goNextTimer);
+    goNextTimer = setTimeout(goNextQuestion, 900);
+    return;
+  }
+
+  showSticker("wrong");
+  renderQuiz();
+
+  if (unlockTimer) clearTimeout(unlockTimer);
+  unlockTimer = setTimeout(() => {
+    selected = null;
+    locked = false;
+    renderQuiz();
+  }, 180);
+}
+
+// ---------- Valentine flow ----------
+function moveNoButton() {
+  const dx = Math.floor(rand(-160, 160));
+  const dy = Math.floor(rand(-90, 90));
+  noTransform = `translate(${dx}px, ${dy}px)`;
+  el.btnNo.style.transform = noTransform;
+}
+
+function setConfetti(on) {
+  yesConfetti = on;
+  if (!yesConfetti) {
+    el.confetti.hidden = true;
+    el.confetti.innerHTML = "";
+    return;
+  }
+
+  const pieces = makeConfettiPieces(260);
+  el.confetti.hidden = false;
+  el.confetti.innerHTML = "";
+
+  pieces.forEach((p) => {
+    const sp = document.createElement("span");
+    sp.className = "confettiPiece";
+    sp.style.setProperty("--x", p.x);
+    sp.style.setProperty("--size", p.size);
+    sp.style.setProperty("--rot", p.rot);
+    sp.style.setProperty("--dur", p.dur);
+    sp.style.setProperty("--delay", p.delay);
+    sp.style.setProperty("--c", p.c);
+    el.confetti.appendChild(sp);
+  });
+}
+
+function setYesPop(on) {
+  yesPop = on;
+  el.yesPop.hidden = !yesPop;
+}
+
+function answerValentine(ans) {
+  if (ans !== "yes") return;
+
+  valentineAnswer = "yes";
+
+  el.valentineArea.hidden = true;
+  el.yesCelebrateText.hidden = false;
+
+  setConfetti(true);
+  setYesPop(true);
+
+  setTimeout(() => setYesPop(false), 2400);
+  setTimeout(() => setConfetti(false), 5200);
+}
+
+function goToValentineQuestion() {
+  setStage("valentine");
+  valentineAnswer = null;
+
+  noTransform = "translate(0,0)";
+  el.btnNo.style.transform = noTransform;
+
+  el.valentineArea.hidden = false;
+  el.yesCelebrateText.hidden = true;
+
+  setConfetti(false);
+  setYesPop(false);
+}
+
+function restart() {
+  setStage("quiz");
+
+  setConfetti(false);
+  setYesPop(false);
+
+  noTransform = "translate(0,0)";
+  el.btnNo.style.transform = noTransform;
+
+  index = 0;
+  score = 0;
+  scoredById = {};
+
+  selected = null;
+  locked = false;
+
+  clearSticker();
+
+  valentineAnswer = null;
+  el.valentineArea.hidden = false;
+  el.yesCelebrateText.hidden = true;
+
+  renderQuiz();
+}
+
+// ---------- Events ----------
+el.btnToValentine.addEventListener("click", goToValentineQuestion);
+el.btnRestartFromCelebrate.addEventListener("click", restart);
+el.btnRestartFromValentine.addEventListener("click", restart);
+
+el.btnYes.addEventListener("click", () => answerValentine("yes"));
+el.btnNo.addEventListener("mouseenter", moveNoButton);
+el.btnNo.addEventListener("click", moveNoButton);
+
+// ---------- Init ----------
+(function init() {
+  setStage("quiz");
+  renderScore();
+  renderQuiz();
+})();
