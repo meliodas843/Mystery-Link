@@ -1,4 +1,4 @@
-const wrongImg = "./cat_with_text.png";
+const wrongImg = "./cat_with_text-2.png";
 const correctImg = "./two_cats_high_five_no_background.png";
 
 const QUESTIONS = [
